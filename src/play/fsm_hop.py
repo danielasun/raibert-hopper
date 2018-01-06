@@ -15,38 +15,37 @@ class Hopper(MotionManager):
 
         self.motor_id = [1, 2, 3]
         self.dt = .005
-        self.contact_threshold = 20
-        self.liftoff_threshold = 10
+        self.contact_threshold = 5
+        self.liftoff_threshold = 1
         VI = VrepInterface(self.motor_id, self.dt, gyroscope=True, accelerometer=True, ft_sensor_names=['Force_sensor'])
         MotionManager.__init__(self, VI)
+
+
 
 
 with Hopper() as h: # still works because Hopper inherits from MotionManager
 
     h.initialize()
+    h.device.read_ft_sensor(0,initialize=True)
     print h.state
 
     for i in xrange(500):
         h.advance_timestep()
-        force = sum(h.device.read_ft_sensor(0))
+        force, torque = h.device.read_ft_sensor(0)
+        total_force = sum(force)
         print force, h.state
 
         if h.state == 'airborne':
             h.set_command_position([0, 0, 0])
-            if force > h.contact_threshold:
+            if total_force > h.contact_threshold:
                 h.trigger('touchdown')
                 continue
 
         if h.state == 'stance':
             h.set_command_position([0,0,.1])
-            if force < h.liftoff_threshold:
+            if total_force < h.liftoff_threshold:
                 h.trigger('liftoff')
                 continue
-
-
-
-
-
 
     wait_for_input(3)
 
