@@ -36,13 +36,13 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
         print force, h.state
 
         if h.state == 'airborne':
-            h.set_command_position([0, 0, 0])
+            h.set_all_command_position([0, 0, 0])
             if total_force > h.contact_threshold:
                 h.trigger('touchdown')
                 continue
 
         if h.state == 'stance':
-            h.set_command_position([0,0,.1])
+            h.set_all_command_position([0,0,.1])
             if total_force < h.liftoff_threshold:
                 h.trigger('liftoff')
                 continue
@@ -67,11 +67,11 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
 #             # print "timestep"
 #             # print MM.device.read_gyro()
 #             # print MM.device.read_accelerometer()
-#             MM.set_command_position([0,0,-0])
+#             MM.set_all_command_position([0,0,-0])
 #             # MM.advance_timestep()
 #         for i in range(stance_timesteps):
 #             # print "timestep"
 #             # print MM.device.read_gyro()
 #             # print MM.device.read_accelerometer()
-#             MM.set_command_position([0,0,-.1])
+#             MM.set_all_command_position([0,0,-.1])
 #             # MM.advance_timestep()

@@ -27,7 +27,7 @@ class Hopper(MotionManager):
         MotionManager.__init__(self, VI)
 
     def actuate(self, command, send=False):
-        self.device.set_command_position(self.device.joint[:2], command[:2], send=False)
+        self.device.set_all_command_position(self.device.joint[:2], command[:2], send=False)
         self.device.set_joint_effort([2], [command[2]], send=False)
 
     def read_sensors(self, initialize=False):

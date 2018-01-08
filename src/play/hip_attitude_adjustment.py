@@ -4,7 +4,7 @@ from transitions import Machine
 from rf.util.misc import wait_for_input
 import rf.util.matrix as m
 import numpy.matlib as np
-
+import matplotlib.pyplot as plt
 
 """
    Hopping height control
@@ -50,46 +50,28 @@ leg length
 """
 
 class Hopper(MotionManager):
-    states = ['stance','flight']
+    states = ['flight', 'landing','compression','thrust','unloading']
     transitions = [
-        {'trigger':'touchdown', 'source': 'flight', 'dest': 'stance'},
-        {'trigger':'liftoff', 'source': 'stance', 'dest': 'flight'}
+        ['touchdown','flight','landing'],
+        ['leg_shortens','landing','compression'],
+        ['bottom','compression','thrust'],
+        ['leg_full_length','thrust','unloading'],
+        ['lift_off','unloading','flight']
     ]
 
     def __init__(self):
-        self.machine = Machine(model=self, states=Hopper.states, transitions=Hopper.transitions, initial='stance')
+        self.machine = Machine(model=self, states=Hopper.states, transitions=Hopper.transitions, initial='flight')
         self.motor_id = [1, 2]
-        self.dt = .005
+        self.dt = .002
         self.contact_threshold = 10
         self.liftoff_threshold = 1
-        self.q = [0,0]
-        self.last_error_for_derivative = [0,0]
 
-        # self.acc = np.array([0,0,0])
-        # self.ang_acc = np.array([0,0,0])
-        # self.vel = np.array([0,0,0])
-        # self.w = np.array([0,0,0]).transpose()
+        # model state
+        self.q = [0, 0]
+        self.orientation = [0,0,0]
 
         VI = VrepInterface(self.motor_id, self.dt, gyroscope=True, accelerometer=True, ft_sensor_names=['Force_sensor'])
         MotionManager.__init__(self, VI)
-
-    def calc_servo_command(self, des):
-        q =  self.get_all_current_position()
-        last_q = self.q
-        self.q = q
-        error = [des_i-q_i for des_i, q_i in zip(des, q) ]
-        d_error = [error_i - last_error_i for error_i, last_error_i in zip(error, self.last_error_for_derivative)]
-        self.last_error_for_derivative = error
-
-        hip_torque = .0003*(error[0])/self.dt + 0*d_error[0]/self.dt
-        leg_torque = 0*(error[1])/self.dt + 0*d_error[1]/self.dt
-        print "hip_torque: {} leg_torque: {} ".format(hip_torque, leg_torque)
-        return hip_torque, leg_torque
-
-    def actuate(self, desired_angles, send=False):
-        hip_torque, leg_torque = self.calc_servo_command(desired_angles)
-        command = (hip_torque, leg_torque)
-        self.set_joint_effort(command, send=False)
 
     def read_sensors(self, initialize=False):
         gyro_data = np.array(self.device.read_gyro(initialize))
@@ -97,37 +79,63 @@ class Hopper(MotionManager):
         force_data, torque_data = self.device.read_ft_sensor(0, initialize)
         return gyro_data, accel_data, np.array(force_data), np.array(torque_data)
 
+    def update_state(self):
+        gyro_data, accel_data, force_data, _  =self.read_sensors()
 
+        self.total_foot_force = np.sum(force_data)
+        self.orientation = [ori + 20*gyro*self.dt for ori, gyro in zip(self.orientation, gyro_data)]
+        print "orientation: {},{},{}".format(*self.orientation)
+        return gyro_data, accel_data, force_data, _
+
+
+orientation_list = []
+n_time_steps = 400
 with Hopper() as h: # still works because Hopper inherits from MotionManager
 
     h.initialize()
     h.read_sensors(initialize=True)
-    h.advance_timestep()
 
-    for mm in xrange(1000):
+    # set up for plotting
+    orientation_list = []
+    gyro_list = []
+    actual_orientation_list = []
+    n_time_steps = 500
+    times = np.arange(0, n_time_steps * h.dt, h.dt)
+
+    for t in times:
         h.advance_timestep()
         print h.state
+        # read sensors
         gyro, acc, force, torque = h.read_sensors()
+        h.update_state()
+        orientation_list.append((h.orientation))
         total_force = sum(force)
-        print force
+
+        # get positions
+        h.q = h.get_all_current_position()
+
+        print acc
 
         if h.state == 'flight':
-            h.set_all_command_position([0, 0], send=False)
+            h.set_all_command_position([.1, 0], send=False)
             h.advance_timestep()
             if total_force > h.contact_threshold:
                 h.trigger('touchdown')
                 continue
 
         if h.state == 'stance':
-            h.set_all_command_position([0,.05], send=False)
+
+            h.set_all_command_position([h.orientation[1], .05,], send=False)
             h.advance_timestep()
             if total_force < h.liftoff_threshold:
                 h.trigger('liftoff')
                 continue
 
-
-
-
-
-
     wait_for_input(1)
+
+    ## plotting orientation_data
+    t = np.arange(0,n_time_steps*h.dt,h.dt)
+    x, y, z = zip(*orientation_list)
+    plt.figure()
+    plt.plot(t,z)
+    plt.show()
