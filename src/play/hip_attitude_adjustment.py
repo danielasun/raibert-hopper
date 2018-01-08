@@ -50,13 +50,10 @@ leg length
 """
 
 class Hopper(MotionManager):
-    states = ['flight', 'landing','compression','thrust','unloading']
+    states = ['flight', 'stance']
     transitions = [
-        ['touchdown','flight','landing'],
-        ['leg_shortens','landing','compression'],
-        ['bottom','compression','thrust'],
-        ['leg_full_length','thrust','unloading'],
-        ['lift_off','unloading','flight']
+        ['touchdown','flight','stance'],
+        ['liftoff','stance','flight']
     ]
 
     def __init__(self):
@@ -117,7 +114,7 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
         print acc
 
         if h.state == 'flight':
-            h.set_all_command_position([.1, 0], send=False)
+            h.set_all_command_position([0, 0], send=False)
             h.advance_timestep()
             if total_force > h.contact_threshold:
                 h.trigger('touchdown')
