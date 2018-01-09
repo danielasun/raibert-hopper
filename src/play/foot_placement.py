@@ -78,25 +78,29 @@ class Hopper(MotionManager):
         self.contact_threshold = 10
         self.liftoff_threshold = 1
         self.spring_compressed = -.024
-        self.unloading_time = .01 # time to wait before entering flight phase
-        self.Ts = .05 # duration of stance phase = compression + thrust
+        self.unloading_time = .02 # time to wait before entering flight phase
+        self.Ts = .07 # duration of stance phase = compression + thrust
         self.timer = 0
-        self.desired_x_vel = .1 #m/s
+        self.desired_x_vel = .00 # m/s
 
-        self.k_xdot = .03
+        self.hopping_height_desired = .2
         self.r = .2872
         self.thrust_length = .06
 
+        # gains
+        self.k_xdot = .1
+        self.kp_hopping_height = .3
+
         # model state
         self.q = [0, 0]
-        self.body_vel = [0,0,0]
+        self.body_lin_vel = [0, 0, 0]
         self.body_rot_vel = [0, 0, 0]
         self.body_euler_angles = [0, 0, 0]
         self.body_accel = [0,0,0]
+        self.hopping_height = .4 # starting height [m]
+        self.body_position = [0,.3,self.hopping_height]
         self.foot_total_force = 0
-
-
-
+        self.going_up = False
 
     def on_enter_compression(self):
         # zero thrust timer
@@ -106,12 +110,15 @@ class Hopper(MotionManager):
     def on_enter_unloading(self):
         self.timer = 0
 
+    def on_enter_flight(self):
+        self.going_up = True
+
     def read_sensors(self, initialize=False):
         gyro_data = np.array(self.device.read_gyro(initialize))
         accel_data = np.array(self.device.read_accelerometer(initialize))
         force_data, torque_data = self.device.read_ft_sensor(0, initialize)
 
-        # cheating for now with the linear and angular velocity
+        # cheating for now with values straight from VREP
         if initialize:
             opmode = vrep.simx_opmode_oneshot_wait
         else:
@@ -119,21 +126,23 @@ class Hopper(MotionManager):
 
         _, body_lin_vel, body_ang_vel = vrep.simxGetObjectVelocity(self.device._sim_Client_ID, self.body_handle, opmode) # this needs to be relative to the boom attachment.
         _, euler_angles = vrep.simxGetObjectOrientation(self.device._sim_Client_ID, self.body_handle, self.body_ref_sphere_handle, opmode)
+        _, body_position = vrep.simxGetObjectPosition(self.device._sim_Client_ID, self.body_handle, -1, opmode)
 
-        return gyro_data, accel_data, np.array(force_data), np.array(torque_data), body_lin_vel, body_ang_vel, euler_angles
+        return gyro_data, accel_data, np.array(force_data), np.array(torque_data), body_lin_vel, body_ang_vel, euler_angles, body_position
 
     def update_state(self):
-        gyro_data, accel_data, force_data, _, body_lin_vel, body_ang_vel, body_euler_angles = self.read_sensors()
+        gyro_data, accel_data, force_data, _, body_lin_vel, body_ang_vel, body_euler_angles, body_position = self.read_sensors()
         self.q = self.get_all_current_position()
         self.foot_total_force = np.sum(force_data)
         self.body_euler_angles = body_euler_angles #[wrap_between_pi_and_neg_pi(ori + 10*gyro*self.dt) for ori, gyro in zip(self.body_euler_angles, gyro_data)] # todo: this line is suspect
-        self.body_vel = body_lin_vel#[bd_vel + acc_i*self.dt for bd_vel, acc_i in zip(self.body_vel, accel_data)]
+        self.body_lin_vel = body_lin_vel#[bd_vel + acc_i*self.dt for bd_vel, acc_i in zip(self.body_vel, accel_data)]
         self.body_rot_vel = gyro_data
+        self.body_position = body_position
         # print "body_euler_angles: {},{},{}".format(*self.body_euler_angles)
         return gyro_data, accel_data, force_data, _
 
     def calc_leg_landing_angle(self):
-        xvel = self.body_vel[0]
+        xvel = self.body_lin_vel[0]
         xf = xvel*self.Ts/2.0 + self.k_xdot*(xvel - self.desired_x_vel)
         hip_angle = -self.body_euler_angles[1] - asin(xf / self.r)
         return hip_angle
@@ -147,6 +156,11 @@ class Hopper(MotionManager):
         _, lin_vel, ang_vel = vrep.simxGetObjectVelocity(self.device._sim_Client_ID, self.body_handle, opmode)
         return lin_vel, ang_vel
 
+    def calc_leg_extension(self):
+        # want to control hopping height
+        self.thrust_length = self.thrust_length + self.kp_hopping_height*(self.hopping_height_desired - self.hopping_height)
+
+
 
 with Hopper() as h: # still works because Hopper inherits from MotionManager
 
@@ -158,8 +172,9 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
     gyro_list = []
     actual_body_euler_angles_list = []
     body_vel_list = []
-    n_time_steps = 500
-    times = np.arange(0, n_time_steps * h.dt, h.dt)
+    length_of_simulation = 10 # seconds
+    n_time_steps = length_of_simulation/h.dt
+    times = np.arange(0, length_of_simulation, h.dt)
 
     for t in times:
         h.advance_timestep()
@@ -169,7 +184,7 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
         h.update_state()
         body_euler_angles_list.append(h.body_euler_angles)
         gyro_list.append(h.body_rot_vel)
-        body_vel_list.append(h.body_vel)
+        body_vel_list.append(h.body_lin_vel)
 
         if h.foot_total_force < h.liftoff_threshold and h.state != 'flight' and h.state != 'unloading':
             h.trigger('liftoff')
@@ -181,6 +196,16 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
             # position leg for landing
             landing_angle = h.calc_leg_landing_angle()
             h.set_all_command_position([landing_angle, 0], send=False)
+
+            # figure out maximum height, but only once:
+            if h.going_up:
+                print "going up"
+                if h.body_lin_vel[2] < 0:
+                    h.going_up = False
+                    h.hopping_height = h.body_position[2]
+            else:
+                print "going down"
+
             if h.foot_total_force > h.contact_threshold:
                 h.trigger('touchdown')
                 print "trigger: touchdown"
@@ -198,7 +223,7 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
             h.set_all_command_position((h.body_euler_angles[1], 0), send=False)
             h.timer += h.dt
 
-            if h.body_vel[2] > 0: # TODO: this isn't reading correctly, need to use something besides the IMU
+            if h.body_lin_vel[2] > 0: # TODO: this isn't reading correctly, need to use something besides the IMU
                 h.trigger('bottom')
                 print "body_vel is positive"
                 continue
@@ -226,25 +251,8 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
                 continue
 
 
-
-
-
-
-        #
-        # if h.state == 'stance':
-        #     h.set_all_command_position([h.body_euler_angles[1], .05,], send=False)
-
-
     wait_for_input(1)
 
-
-
-
-
-    plt.show()
-
-    ## plotting body_euler_angles_data
-    # t = np.arange(0,n_time_steps*h.dt,h.dt)
     t = times
     x, y, z = zip(*body_euler_angles_list)
     gx,gy,gz = zip(*gyro_list)
@@ -256,6 +264,7 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
     ax[0].plot(t,z, label="z_body_euler_angles")
     ax[0].set_title('robot_body_euler_angles from gyro')
 
+
     ax[0].legend(loc=3)
 
     ax[1].plot(t,gx,label='gyro_x')
@@ -265,6 +274,6 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
     ax[1].legend(loc=3)
 
     ax[2].plot(t, vx, label="v_velocity")
-
+    ax[2].set_title('x velocity')
 
     plt.show()
