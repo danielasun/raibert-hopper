@@ -81,15 +81,15 @@ class Hopper(MotionManager):
         self.unloading_time = .02 # time to wait before entering flight phase
         self.Ts = .07 # duration of stance phase = compression + thrust
         self.timer = 0
-        self.desired_x_vel = .00 # m/s
+        self.desired_x_vel = .1 # m/s
 
-        self.hopping_height_desired = .2
+        self.hopping_height_desired = .3
         self.r = .2872
         self.thrust_length = .06
 
         # gains
         self.k_xdot = .1
-        self.kp_hopping_height = .3
+        self.kp_hopping_height = .4
 
         # model state
         self.q = [0, 0]
@@ -134,7 +134,7 @@ class Hopper(MotionManager):
         gyro_data, accel_data, force_data, _, body_lin_vel, body_ang_vel, body_euler_angles, body_position = self.read_sensors()
         self.q = self.get_all_current_position()
         self.foot_total_force = np.sum(force_data)
-        self.body_euler_angles = body_euler_angles #[wrap_between_pi_and_neg_pi(ori + 10*gyro*self.dt) for ori, gyro in zip(self.body_euler_angles, gyro_data)] # todo: this line is suspect
+        self.body_euler_angles = body_euler_angles #[wrap_between_pi_and_neg_pi(ori + 10*gyro*self.dt) for ori, gyro in zip(self.body_euler_angles, gyro_data)]
         self.body_lin_vel = body_lin_vel#[bd_vel + acc_i*self.dt for bd_vel, acc_i in zip(self.body_vel, accel_data)]
         self.body_rot_vel = gyro_data
         self.body_position = body_position
@@ -157,9 +157,9 @@ class Hopper(MotionManager):
         return lin_vel, ang_vel
 
     def calc_leg_extension(self):
-        # want to control hopping height
-        self.thrust_length = self.thrust_length + self.kp_hopping_height*(self.hopping_height_desired - self.hopping_height)
-
+        # control hopping height by decreasing support time TODO: this doesn't work, move piston to be force controlled
+        self.Ts += -self.kp_hopping_height*(self.hopping_height_desired - self.hopping_height)
+        print "support time: {}".format(self.Ts)
 
 
 with Hopper() as h: # still works because Hopper inherits from MotionManager
@@ -172,7 +172,7 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
     gyro_list = []
     actual_body_euler_angles_list = []
     body_vel_list = []
-    length_of_simulation = 10 # seconds
+    length_of_simulation = 6 # seconds
     n_time_steps = length_of_simulation/h.dt
     times = np.arange(0, length_of_simulation, h.dt)
 
@@ -203,6 +203,7 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
                 if h.body_lin_vel[2] < 0:
                     h.going_up = False
                     h.hopping_height = h.body_position[2]
+                    # h.calc_leg_extension() # TODO: eventually reenable this
             else:
                 print "going down"
 
