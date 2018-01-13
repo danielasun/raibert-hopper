@@ -8,9 +8,24 @@ with MotionManager(VI) as MM:
     MM.initialize()
 
     print MM.device.joint
-    ntimes = 1000
+    ntimes = 100
     t = np.linspace(0,6*np.pi,ntimes)
     cmd_list = [9,10.5,-3,5,10]
+    ind = 0
+    for i in xrange(1,ntimes):
+
+        if i%20 ==0:
+            ind += 1
+        cmd = cmd_list[ind]
+        joint_effort = MM.get_joint_effort(ids=[0])
+
+
+        MM.set_joint_effort([0],[cmd])
+        print 'joint effort: {}, cmd: {}'.format(joint_effort,cmd)
+        MM.advance_timestep()
+
+    ntimes = 1000
+    cmd_list = [9, 15, 9, 9.9,9.7]
     ind = 0
     for i in xrange(1,ntimes):
 
