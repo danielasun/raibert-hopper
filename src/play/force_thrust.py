@@ -62,6 +62,7 @@ class Hopper(MotionManager):
         self.machine.add_transition('touchdown', 'flight', 'landing')
         self.machine.add_transition('leg_shortens','landing','compression' )
         self.machine.add_transition('bottom','compression','thrust')
+        self.machine.add_transition('half_of_stance_time_exceeded', 'compression', 'thrust')
         self.machine.add_transition('stance_time_exceeded','thrust','unloading')
         self.machine.add_transition('liftoff',['landing','compression','thrust'],'unloading')
         self.machine.add_transition('unloading_time_exceeded', 'unloading', 'flight')
@@ -74,21 +75,29 @@ class Hopper(MotionManager):
         self.body_handle = VI.get_object_handles('1D_Hopper')
         self.body_ref_sphere_handle = VI.get_object_handles('Sphere')
 
+        # vrep force control properties
+        self.device.revolute_joint_torque_control_max_speed = 100 # rad/s
+        self.device.prismatic_joint_torque_control_max_speed = 3 # m/s
+
+
         # parameter
-        self.contact_threshold = 10
+        self.contact_threshold = 5
         self.liftoff_threshold = 1
         self.spring_compressed = -.024
         self.unloading_time = .02 # time to wait before entering flight phase
-        self.Ts = .07 # duration of stance phase = compression + thrust
+        self.Ts = .03 # duration of stance phase = compression + thrust
         self.timer = 0
-        self.desired_x_vel = -.1 # m/s
-
-        self.hopping_height_desired = .3
+        self.desired_x_vel = .1 # m/s
         self.r = .2872
+
+
+        self.hopping_height_desired = .4
+
         self.thrust_length = .06
+        self.leg_thrust = 1000 # [N]
 
         # gains
-        self.k_xdot = .08
+        self.k_xdot = .03
         self.kp_hopping_height = .4
 
         # model state
@@ -101,6 +110,9 @@ class Hopper(MotionManager):
         self.body_position = [0,.3,self.hopping_height]
         self.foot_total_force = 0
         self.going_up = False
+
+        # errors
+
 
     def on_enter_compression(self):
         # zero thrust timer
@@ -143,7 +155,8 @@ class Hopper(MotionManager):
 
     def calc_leg_landing_angle(self):
         xvel = self.body_lin_vel[0]
-        xf = xvel*self.Ts/2.0 + self.k_xdot*(xvel - self.desired_x_vel)
+        self.xvel_err = xvel - self.desired_x_vel
+        xf = xvel*self.Ts/2.0 + self.k_xdot*(self.xvel_err)
         hip_angle = -self.body_euler_angles[1] - asin(xf / self.r)
         return hip_angle
 
@@ -156,10 +169,15 @@ class Hopper(MotionManager):
         _, lin_vel, ang_vel = vrep.simxGetObjectVelocity(self.device._sim_Client_ID, self.body_handle, opmode)
         return lin_vel, ang_vel
 
-    def calc_leg_extension(self):
+    def update_stance_time(self): # TODO: add kv error terms
         # control hopping height by decreasing support time TODO: this doesn't work, move piston to be force controlled
-        self.Ts += -self.kp_hopping_height*(self.hopping_height_desired - self.hopping_height)
+        self.Ts += self.kp_hopping_height*(self.hopping_height_desired - self.hopping_height)
         print "support time: {}".format(self.Ts)
+
+    def actuate_joints(self, command, send=False):
+        self.set_command_position([0], [command[0]], send)
+        self.set_joint_effort([1], [command[1]], send)
+
 
 
 with Hopper() as h: # still works because Hopper inherits from MotionManager
@@ -195,7 +213,7 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
             # exhaust leg to low pressure
             # position leg for landing
             landing_angle = h.calc_leg_landing_angle()
-            h.set_all_command_position([landing_angle, 0], send=False)
+            h.actuate_joints([landing_angle, -30], send=False)
 
             # figure out maximum height, but only once:
             if h.going_up:
@@ -203,7 +221,7 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
                 if h.body_lin_vel[2] < 0:
                     h.going_up = False
                     h.hopping_height = h.body_position[2]
-                    # h.calc_leg_extension() # TODO: eventually reenable this
+                    h.update_stance_time() # TODO: eventually reenable this
             else:
                 print "going down"
 
@@ -221,19 +239,23 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
         if h.state == 'compression':
             # upper leg chamber sealed
             # servo body attitude with hip
-            h.set_all_command_position((h.body_euler_angles[1], 0), send=False)
+            h.actuate_joints((h.body_euler_angles[1], .5), send=False)
             h.timer += h.dt
 
             if h.body_lin_vel[2] > 0: # TODO: this isn't reading correctly, need to use something besides the IMU
                 h.trigger('bottom')
                 print "body_vel is positive"
                 continue
+            if h.timer > h.Ts/2:
+                h.trigger('half_of_stance_time_exceeded')
+                print "trigger: 1/2 of stance time exceeded"
+                continue
 
 
         if h.state == 'thrust':
             # pressurize leg
             # servo body attitude with hip
-            h.set_all_command_position((h.body_euler_angles[1], h.thrust_length), send=False)
+            h.actuate_joints((h.body_euler_angles[1], h.leg_thrust), send=False)
             h.timer += h.dt
             if h.timer > h.Ts:
                 h.trigger('stance_time_exceeded')
@@ -244,7 +266,7 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
         if h.state == 'unloading':
             # stop thrust
             # zero hip torque
-            h.set_all_command_position((h.body_euler_angles[1], 0), send=False)
+            h.actuate_joints((h.body_euler_angles[1], -30), send=False)
             h.timer += h.dt
             if h.timer > h.Ts:
                 h.trigger('unloading_time_exceeded')
