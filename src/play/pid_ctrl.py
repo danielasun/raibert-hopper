@@ -3,6 +3,9 @@ from rf.player.vrep.vrep_interface import VrepInterface
 from rf.util.misc import wait_for_input
 import numpy as np
 
+# def pid_controller(q, qd, e):
+
+
 VI = VrepInterface([1],dt=.005)
 with MotionManager(VI) as MM:
     MM.initialize()
@@ -15,21 +18,6 @@ with MotionManager(VI) as MM:
     for i in xrange(1,ntimes):
 
         if i%20 ==0:
-            ind += 1
-        cmd = cmd_list[ind]
-        joint_effort = MM.get_joint_effort(ids=[0])
-
-
-        MM.set_joint_effort([0],[cmd])
-        print 'joint effort: {}, cmd: {}'.format(joint_effort,cmd)
-        MM.advance_timestep()
-
-    ntimes = 1000
-    cmd_list = [9, 11, 9, 9.9,9.7]
-    ind = 0
-    for i in xrange(1,ntimes):
-
-        if i%200 ==0:
             ind += 1
         cmd = cmd_list[ind]
         joint_effort = MM.get_joint_effort(ids=[0])

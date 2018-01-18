@@ -77,15 +77,15 @@ class Hopper(MotionManager):
 
         # vrep force control properties
         self.device.revolute_joint_torque_control_max_speed = 100 # rad/s
-        self.device.prismatic_joint_torque_control_max_speed = 3 # m/s
+        self.device.prismatic_joint_torque_control_max_speed = 10 # m/s
 
 
         # parameter
-        self.contact_threshold = 1
+        self.contact_threshold = 5
         self.liftoff_threshold = 1
         self.spring_compressed = -.024
         self.unloading_time = .02 # time to wait before entering flight phase
-        self.Ts = .03 # duration of stance phase = compression + thrust
+        self.Ts = .1 # duration of stance phase = compression + thrust
         self.timer = 0
         self.desired_x_vel = .1 # m/s
         self.r = .2872
@@ -93,11 +93,11 @@ class Hopper(MotionManager):
 
         self.hopping_height_desired = .4
 
-        self.thrust_length = .03
-        self.leg_thrust = 10 # [N]
+        self.thrust_length = .06
+        self.leg_thrust = 1000 # [N]
 
         # gains
-        self.k_xdot = .002
+        self.k_xdot = .03
         self.kp_hopping_height = .4
 
         # model state
@@ -185,118 +185,12 @@ with Hopper() as h: # still works because Hopper inherits from MotionManager
     h.initialize()
     h.read_sensors(initialize=True)
 
-    # set up for plotting
-    body_euler_angles_list = []
-    gyro_list = []
-    actual_body_euler_angles_list = []
-    body_vel_list = []
-    length_of_simulation = 6 # seconds
-    n_time_steps = length_of_simulation/h.dt
-    times = np.arange(0, length_of_simulation, h.dt)
-
-    for t in times:
+    for i in xrange(500):
+        h.actuate_joints([0,5])
         h.advance_timestep()
-        print h.state
-
-        # read sensors
-        h.update_state()
-        body_euler_angles_list.append(h.body_euler_angles)
-        gyro_list.append(h.body_rot_vel)
-        body_vel_list.append(h.body_lin_vel)
-
-        if h.foot_total_force < h.liftoff_threshold and h.state != 'flight' and h.state != 'unloading':
-            h.trigger('liftoff')
-            print "trigger: liftoff"
-
-
-        if h.state == 'flight':
-            # exhaust leg to low pressure
-            # position leg for landing
-            landing_angle = h.calc_leg_landing_angle()
-            h.actuate_joints([landing_angle, -30], send=False)
-
-            # figure out maximum height, but only once:
-            if h.going_up:
-                print "going up"
-                if h.body_lin_vel[2] < 0:
-                    h.going_up = False
-                    h.hopping_height = h.body_position[2]
-                    h.update_stance_time() # TODO: eventually reenable this
-            else:
-                print "going down"
-
-            if h.foot_total_force > h.contact_threshold:
-                h.trigger('touchdown')
-                print "trigger: touchdown"
-                continue
-
-        if h.state == 'landing':
-            # stop exhausting leg
-            # zero hip torque
-            # if leg shortens
-            h.trigger('leg_shortens')
-
-        if h.state == 'compression':
-            # upper leg chamber sealed
-            # servo body attitude with hip
-            h.actuate_joints((h.body_euler_angles[1], .5), send=False)
-            h.timer += h.dt
-
-            if h.body_lin_vel[2] > 0: # TODO: this isn't reading correctly, need to use something besides the IMU
-                h.trigger('bottom')
-                print "body_vel is positive"
-                continue
-            if h.timer > h.Ts/2:
-                h.trigger('half_of_stance_time_exceeded')
-                print "trigger: 1/2 of stance time exceeded"
-                continue
-
-
-        if h.state == 'thrust':
-            # pressurize leg
-            # servo body attitude with hip
-            h.actuate_joints((h.body_euler_angles[1], h.leg_thrust), send=False)
-            h.timer += h.dt
-            if h.timer > h.Ts:
-                h.trigger('stance_time_exceeded')
-                print "trigger: stance time exceeded"
-                continue
-
-
-        if h.state == 'unloading':
-            # stop thrust
-            # zero hip torque
-            h.actuate_joints((h.body_euler_angles[1], -30), send=False)
-            h.timer += h.dt
-            if h.timer > h.Ts:
-                h.trigger('unloading_time_exceeded')
-                print "trigger: unloading time exceeded"
-                continue
-
-
-    wait_for_input(1)
-
-    t = times
-    x, y, z = zip(*body_euler_angles_list)
-    gx,gy,gz = zip(*gyro_list)
-    vx,vy,vz = zip(*body_vel_list)
-    fig, ax = plt.subplots(nrows=3, ncols=1)
-
-    ax[0].plot(t,x, label="x_body_euler_angles")
-    ax[0].plot(t,y, label="y_body_euler_angles")
-    ax[0].plot(t,z, label="z_body_euler_angles")
-    ax[0].set_title('robot_body_euler_angles from gyro')
-
-
-    ax[0].legend(loc=3)
-
-    ax[1].plot(t,gx,label='gyro_x')
-    ax[1].plot(t,gy,label='gyro_y')
-    ax[1].plot(t,gz,label='gyro_z')
-    ax[1].set_title('gyro_reading')
-    ax[1].legend(loc=3)
-
-    ax[2].plot(t, vx, label="v_velocity")
-    ax[2].set_title('x velocity')
-
-    plt.show()
+    for i in xrange(500):
+        h.actuate_joints([0,-5])
+        h.advance_timestep()
+    for i in xrange(500):
+        h.actuate_joints([0,10])
+        h.advance_timestep()
